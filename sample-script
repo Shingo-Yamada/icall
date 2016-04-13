@@ -1,0 +1,66 @@
+sys icall handler periodic update-crl {
+    first-occurrence 2016-04-08:16:50:00
+    interval 30
+    script script-update-crl
+    status inactive
+}
+sys icall script script-update-crl {
+    app-service none
+    definition {
+        tmsh::log "----------------Script Start  -------------------"
+        foreach obj0 [tmsh::get_config /sys file ssl-crl] {
+            if { [tmsh::get_field_value $obj0 last-update-time] != ""} {
+                set b_file_Time [tmsh::get_field_value $obj0 last-update-time]
+                tmsh::log "Before file time $b_file_Time"
+            } break
+        }
+        foreach obj1 [tmsh::get_status /cm failover-status] {
+            if { [tmsh::get_field_value $obj1 status] == "ACTIVE" }{
+                tmsh::log "Failover Status: Active"
+                tmsh::modify sys file ssl-crl test.crl source-path http://192.168.1.1/cert/test-crl.pem
+                tmsh::save sys config
+                tmsh::log ".... Update CRL File"
+
+                #########  Sync  ########
+                tmsh::run cm config-sync to-group device-group-1
+
+                #########  Sync Status Check ########
+                after 2000
+                foreach obj2 [tmsh::get_status /cm sync-status] {
+                    if { [tmsh::get_field_value $obj2 status] == "Disconnected" }{
+                        tmsh::log "Sync NG...   Status: Disconnected"
+                    } elseif { [tmsh::get_field_value $obj2 status] == "In Sync" }{
+                        tmsh::log "Sync OK...   Status: In Sync"
+                    } elseif { [tmsh::get_field_value $obj2 status] == "Changes Pending" }{
+                        tmsh::log " ... Sync Status: Changes Pending"
+                    } else {
+                        tmsh::log "Status unkown"
+                    }
+                    break
+                }
+            } elseif { [tmsh::get_field_value $obj1 status] == "FORCED OFFLINE" }{
+                tmsh::log "Failover Status: FORCED OFFLINE"
+                tmsh::log "----------------Script Finish-------------------"
+                break
+
+            } elseif { [tmsh::get_field_value $obj1 status] == "STANDBY" }{
+                tmsh::log "Failover Status: STANDBY"
+                tmsh::log "----------------Script Finish-------------------"
+                break
+            }
+        }
+        foreach obj3 [tmsh::get_config /sys file ssl-crl] {
+            if { [tmsh::get_field_value $obj3 last-update-time] != ""}{
+                set a_file_Time [tmsh::get_field_value $obj3 last-update-time]
+                #tmsh::log "after file time  $a_file_Time"
+                if { $a_file_Time > $b_file_Time } {
+                    tmsh::log "After  file time $a_file_Time"
+                    tmsh::log "----------------Script Finish -------------------"
+                    break
+                }
+            }
+        }
+    }
+    description none
+    events none
+}

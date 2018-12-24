@@ -18,13 +18,34 @@ sys icall script iCallCrlUpdate {
         set status [exec /usr/bin/rdexec $rd /usr/bin/curl-apd -ks -o $crlDir/LatestCRL.crl -w %{http_code} -H Host:$host $url --ntlm -u $username:$pass]
 
         if {$status == 200} {
-            #The following is an option. If format change is required from DER to PEM.
-            #exec /usr/bin/openssl crl -in $crlDir/LatestCRL.crl -inform DER -outform PEM -out $crlDir/LatestCRL.crl
+            #Change format DER to PEM.
+            if { ![catch {exec openssl crl -inform DER -in $crlDir/LatestCRL.crl -noout -text}] } {
+                exec /bin/logger -i -t $logTag -p local0.$logLevel "Change format DER to PEM."
+                if { [catch {exec openssl crl -inform DER -in $crlDir/LatestCRL.crl -outform PEM -out $crlDir/LatestCRL.crl} err] } {
+                    exec /bin/logger -i -t $logTag -p local0.$logLevel "Unable to convert CRL file\n$err"
+                    exit 1
+                }
+            }
+            if { [catch {exec openssl crl -inform PEM -in $crlDir/LatestCRL.crl -noout -text} err] } {
+                exec /bin/logger -i -t $logTag -p local0.$logLevel "CRL file type is unknown\n$err"
+                exit 1
+            }
+
             #Update F5 SSL CRL file
-            tmsh::modify sys file ssl-crl $sslCrl source-path file:$crlDir/LatestCRL.crl
-            exec /bin/logger -t $logTag -p local0.$logLevel "F5 CRL files update complete."
+            if { [catch {tmsh::modify sys file ssl-crl $sslCrl source-path file:$crlDir/LatestCRL.crl} err] } {
+                exec /bin/logger -i -t $logTag -p local0.$logLevel "Unable to update crl file.\n$err"
+                exit 1
+            } else {
+                exec sleep 3
+                set profStatus [tmsh::get_field_value [lindex [tmsh::get_status apm profile access $AccessProfile] 0] "config-sync-state"]
+            }
         } else {
             exec /bin/logger -i -t $logTag -p local0.error "Command /usr/bin/rdexec $rd /usr/bin/curl-apd -s -o $crlDir/LatestCRL.crl -w '%{http_code}' -H 'Host: onsitecrl.trustwise.com' $url, failed with status=$status"
+        }
+        if {$profStatus == "Required"} {
+            tmsh::modify /apm profile access $AccessProfile generation-action increment
+            exec /bin/logger -t $logTag -p local0.$logLevel "Apply access policy. $AccessProfile"
+            exec /bin/logger -t $logTag -p local0.$logLevel "F5 CRL files update complete."
         }
     }
     description none

@@ -18,6 +18,8 @@ sys icall script iCallCrlUpdate {
         set status [exec /usr/bin/rdexec $rd /usr/bin/curl-apd -ks -o $crlDir/LatestCRL.crl -w %{http_code} -H Host:$host $url --ntlm -u $username:$pass]
 
         if {$status == 200} {
+            #The following is an option. If format change is required from DER to PEM.
+            #exec /usr/bin/openssl crl -in $crlDir/LatestCRL.crl -inform DER -outform PEM -out $crlDir/LatestCRL.crl
             #Update F5 SSL CRL file
             tmsh::modify sys file ssl-crl $sslCrl source-path file:$crlDir/LatestCRL.crl
             exec /bin/logger -t $logTag -p local0.$logLevel "F5 CRL files update complete."

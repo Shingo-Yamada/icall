@@ -1,0 +1,64 @@
+sys icall script iCallCrlUpdate {
+    app-service none
+    definition {
+        set logTag "iCallCrlUpdate"
+        set logLevel "notice"
+
+        #Getting handler provided arguments
+        foreach arg { rd url host folder sslCrl username pass} {
+            set $arg $EVENT::context($arg)
+        }
+
+        #Create a directory to save files to disk
+        set crlDir /var/tmp/$folder
+        exec mkdir -p $crlDir
+        exec /bin/logger -i -t $logTag -p local0.$logLevel "Running, CRL URL=$url, Host=$host, SSL CRL=$sslCrl, Directory=$crlDir, rd=$rd"
+
+        #Download CRL file from provided route domain (rd) and url arguments and save to temporary directory
+        set status [exec /usr/bin/rdexec $rd /usr/bin/curl-apd -ks -o $crlDir/LatestCRL.crl -w %{http_code} -H Host:$host $url --ntlm -u $username:$pass]
+
+        if {$status == 200} {
+            #Update F5 SSL CRL file
+            tmsh::modify sys file ssl-crl $sslCrl source-path file:$crlDir/LatestCRL.crl
+            exec /bin/logger -t $logTag -p local0.$logLevel "F5 CRL files update complete."
+        } else {
+            exec /bin/logger -i -t $logTag -p local0.error "Command /usr/bin/rdexec $rd /usr/bin/curl-apd -s -o $crlDir/LatestCRL.crl -w '%{http_code}' -H 'Host: onsitecrl.trustwise.com' $url, failed with status=$status"
+        }
+    }
+    description none
+    events none
+}
+sys icall handler periodic someCrl-CrlUpdate {
+    arguments {
+        {
+            name rd
+            value 0
+        }
+        {
+            name url
+            value https://10.15.2.85/certsrv/certcrl.crl
+        }
+        {
+            name host
+            value 10.15.2.85
+        }
+        {
+            name folder
+            value tempCrlDirectory
+        }
+        {
+            name sslCrl
+            value /Common/someCrlFile.crl
+        }
+        {
+            name username
+            value Administrator
+        }
+        {
+            name pass
+            value password
+        }
+    }
+    interval 600
+    script iCallCrlUpdate
+}
